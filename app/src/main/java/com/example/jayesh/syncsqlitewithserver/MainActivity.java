@@ -1,5 +1,6 @@
 package com.example.jayesh.syncsqlitewithserver;
 
+import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -8,27 +9,21 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
-import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
-import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.Toast;
 
-import com.android.volley.AuthFailureError;
-import com.android.volley.Request;
-import com.android.volley.Response;
-import com.android.volley.VolleyError;
-import com.android.volley.toolbox.StringRequest;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
+
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -38,6 +33,7 @@ public class MainActivity extends AppCompatActivity {
     RecycleviewAdapter recycleviewAdapter;
     ArrayList<Contact> contactArrayList = new ArrayList<>();
     BroadcastReceiver broadcastReceiver;
+    ProgressDialog pd;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,17 +47,23 @@ public class MainActivity extends AppCompatActivity {
         recycleviewAdapter = new RecycleviewAdapter(contactArrayList);
         recyclerView.setAdapter(recycleviewAdapter);
         readFromLocalStorage();
-        broadcastReceiver=new BroadcastReceiver() {
+        broadcastReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                    readFromLocalStorage();
+                readFromLocalStorage();
             }
         };
     }
 
     public void submitName(View view) {
         String name = edtName.getText().toString();
-        saveToAppServer(name);
+        if(name.length()>0) {
+            saveToAppServer(name);
+        }
+        else
+        {
+            Toast.makeText(MainActivity.this,"Please Enter Name",Toast.LENGTH_LONG).show();
+        }
         edtName.setText("");
     }
 
@@ -89,58 +91,46 @@ public class MainActivity extends AppCompatActivity {
 
         if (checkNetworkConnection()) {
 
-            StringRequest stringRequest=new StringRequest(Request.Method.POST, DbContact.SERVER_URI,
-                    new Response.Listener<String>() {
-                        @Override
-                        public void onResponse(String response) {
+            pd=new ProgressDialog(MainActivity.this);
+            pd.setMessage("Please Wait...");
+            pd.show();
+            Retrofit retrofit = new Retrofit.Builder().baseUrl(DbContact.SERVER_URI).addConverterFactory(GsonConverterFactory.create()).build();
+            RetrofitObjectApi service = retrofit.create(RetrofitObjectApi.class);
+            Call<AddPostResponse> call = service.addPost(edtName.getText().toString());
 
-                            try {
-                                JSONObject jsonObject=new JSONObject(response);
-                                String Response=jsonObject.getString("response");
-                                Log.d("Response",Response);
-                                Toast.makeText(getApplicationContext(),Response,Toast.LENGTH_LONG).show();
-                                if(Response.equals("OK"))
-                                {
-                                    saveToLocalStorage(name,DbContact.SYNC_STATUS_OK);
-                                }
-                                else
-                                {
-                                    saveToLocalStorage(name,DbContact.SYNC_STATUS_FAILED);
-                                }
-                            } catch (JSONException e) {
-                                Toast.makeText(getApplicationContext(),e.getMessage(),Toast.LENGTH_LONG).show();
-                                Log.d("Response",e.getMessage());
-                                e.printStackTrace();
-                            }
+            call.enqueue(new Callback<AddPostResponse>() {
+                @Override
+                public void onResponse(Call<AddPostResponse> call, Response<AddPostResponse> response) {
+                    pd.dismiss();
+                    if (response != null && response.body() != null) {
+                        AddPostResponse addPostResponse = response.body();
+                        String Response = addPostResponse.getResponse();
+                        if (Response.equals("OK")) {
+                            saveToLocalStorage(name, DbContact.SYNC_STATUS_OK);
+                        } else {
+                            saveToLocalStorage(name, DbContact.SYNC_STATUS_FAILED);
                         }
-                    }, new Response.ErrorListener() {
-                @Override
-                public void onErrorResponse(VolleyError error) {
-                    Log.d("Response",error.getMessage());
-                    saveToLocalStorage(name,DbContact.SYNC_STATUS_FAILED);
+                    }
                 }
-            })
-            {
+
                 @Override
-                protected Map<String, String> getParams() throws AuthFailureError {
-                    HashMap<String,String> params=new HashMap<>();
-                    params.put("name",name);
-                    return params;
+                public void onFailure(Call<AddPostResponse> call, Throwable t) {
+                    pd.dismiss();
+                    saveToLocalStorage(name, DbContact.SYNC_STATUS_FAILED);
                 }
-            };
-            MySingleton.getmInstance(MainActivity.this).addToRequestQue(stringRequest);
+            });
+
 
         } else {
-            saveToLocalStorage(name,DbContact.SYNC_STATUS_FAILED);
+            saveToLocalStorage(name, DbContact.SYNC_STATUS_FAILED);
         }
 
     }
 
-    private void saveToLocalStorage(String name,int synct)
-    {
+    private void saveToLocalStorage(String name, int synct) {
         DbHelper dbHelper = new DbHelper(this);
         SQLiteDatabase sqLiteDatabase = dbHelper.getWritableDatabase();
-        dbHelper.saveToLocalDatabase(name,synct, sqLiteDatabase);
+        dbHelper.saveToLocalDatabase(name, synct, sqLiteDatabase);
         readFromLocalStorage();
         dbHelper.close();
     }
@@ -154,7 +144,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onStart() {
         super.onStart();
-        registerReceiver(broadcastReceiver,new IntentFilter(DbContact.UI_UPDATE_BROADCAST));
+        registerReceiver(broadcastReceiver, new IntentFilter(DbContact.UI_UPDATE_BROADCAST));
     }
 
     @Override
